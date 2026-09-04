@@ -16,7 +16,7 @@ func main() {
 	list := flag.Bool("list", false, "reprint identity files from Keychain attributes")
 	delete := flag.Bool("delete", false, "delete a named identity from iCloud Keychain")
 	name := flag.String("name", identity.DefaultName, "identity name")
-	accessControl := flag.String("access-control", string(identity.AccessControlUserPresence), "`userPresence` (prompt later on decrypt) or `none`")
+	accessControl := flag.String("access-control", string(identity.AccessControlUserPresence), "`userPresence` (Touch ID or passcode on decrypt) or `none`")
 
 	p, err := plugin.New(identity.PluginName)
 	if err != nil {

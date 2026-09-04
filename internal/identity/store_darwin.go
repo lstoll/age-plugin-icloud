@@ -15,11 +15,13 @@ import (
 )
 
 var (
-	mu      sync.Mutex
-	secrets = map[string]*age.HybridIdentity{}
-	agOnce  sync.Once
-	ag      string
-	agErr   error
+	mu         sync.Mutex
+	secrets    = map[string]*age.HybridIdentity{}
+	auth       *keychain.AuthContext
+	presenceOK bool
+	agOnce     sync.Once
+	ag         string
+	agErr      error
 )
 
 func accessGroup() (string, error) {
@@ -58,6 +60,12 @@ func wrapKeychain(op string, err error) error {
 			return fmt.Errorf("%s: identity not found", op)
 		case keychain.ErrorCodeDuplicateItem:
 			return fmt.Errorf("%s: an identity with this name already exists", op)
+		case keychain.ErrorCodeUserCanceled:
+			return fmt.Errorf("%s: Touch ID or passcode cancelled", op)
+		case keychain.ErrorCodeAuthFailed:
+			return fmt.Errorf("%s: Touch ID or passcode failed", op)
+		case keychain.ErrorCodeInteractionNotAllowed:
+			return fmt.Errorf("%s: Touch ID needs a GUI (use --access-control=none over SSH): %w", op, err)
 		}
 	}
 	return fmt.Errorf("%s: %w", op, err)
@@ -221,6 +229,19 @@ func loadSecretLocked(name string) (*age.HybridIdentity, error) {
 	if err != nil {
 		return nil, err
 	}
+	attrs, err := keychain.GetGenericPasswordAttributes(q)
+	if err != nil {
+		return nil, wrapKeychain("load identity "+name, err)
+	}
+	_, mode, err := parsePublicAttrs(attrs.GenericAttributes)
+	if err != nil {
+		return nil, fmt.Errorf("identity %q: %w", name, err)
+	}
+	if mode == AccessControlUserPresence {
+		if err := requireUserPresenceLocked(); err != nil {
+			return nil, err
+		}
+	}
 	secret, err := keychain.GetGenericPassword(q)
 	if err != nil {
 		return nil, wrapKeychain("load identity "+name, err)
@@ -231,4 +252,25 @@ func loadSecretLocked(name string) (*age.HybridIdentity, error) {
 	}
 	secrets[name] = id
 	return id, nil
+}
+
+func requireUserPresenceLocked() error {
+	if presenceOK {
+		return nil
+	}
+	if auth == nil {
+		ctx, err := keychain.NewAuthContext()
+		if err != nil {
+			return fmt.Errorf("LAContext: %w", err)
+		}
+		if err := ctx.SetMaximumTouchIDReuseDuration(); err != nil {
+			return err
+		}
+		auth = ctx
+	}
+	if err := auth.EvaluatePolicy(keychain.AuthPolicyDeviceOwnerAuthentication, "decrypt with age-plugin-icloud"); err != nil {
+		return wrapKeychain("authenticate", err)
+	}
+	presenceOK = true
+	return nil
 }

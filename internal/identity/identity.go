@@ -21,7 +21,8 @@ const (
 
 // AccessControlMode is an annotation on a stored identity. iCloud Keychain
 // cannot attach SecAccessControl to synchronizable items, so this is not
-// enforced by Keychain; decrypt will honor it later with an app-level prompt.
+// enforced by Keychain. Decrypt honors userPresence with an app-level
+// LAContext.EvaluatePolicy prompt.
 type AccessControlMode string
 
 const (
@@ -41,7 +42,7 @@ func ParseAccessControl(s string) (AccessControlMode, error) {
 }
 
 // publicAttrs is stored in kSecAttrGeneric (attributes-only; no secret).
-// AccessControl is an annotation for a later app-level LAContext prompt.
+// AccessControl is an annotation for an app-level LAContext prompt on decrypt.
 // iCloud Keychain rejects kSecAttrAccessControl on synchronizable items.
 type publicAttrs struct {
 	Recipient     string `json:"recipient"`

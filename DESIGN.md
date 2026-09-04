@@ -74,7 +74,7 @@ age -e -i icloud-identity.txt -o secret.age file
 age -e -j icloud -o secret.age file
 ```
 
-**Decrypt on any Mac with that Apple ID** (plugin + Keychain):
+**Decrypt on any Mac with that Apple ID** (plugin + Keychain; `EvaluatePolicy` if annotated `userPresence`):
 
 ```bash
 age -d -i icloud-identity.txt secret.age
@@ -113,7 +113,7 @@ Queries **must** set `Synchronizable=true` or they will not see iCloud items. Do
 
 Spike: **Keychain cannot attach `userPresence` to a synchronizable item** (`errSecParam`). Do not use `ThisDeviceOnly` to get a real ACL; that cannot sync.
 
-Instead, store `--access-control` in `kSecAttrGeneric` at generate (no prompt). On decrypt, if the annotation is `userPresence`, call `LAContext` `evaluatePolicy` ourselves, then read the unprotected item. That is plugin policy, not Keychain enforcement: malware that skips the prompt can still `SecItemCopyMatching`. Worth doing as UX; not a substitute for `kSecAttrAccessControl`.
+Instead, store `--access-control` in `kSecAttrGeneric` at generate (no prompt). On decrypt, if the annotation is `userPresence`, call `LAContext.EvaluatePolicy` (`LAPolicyDeviceOwnerAuthentication`) once per process, then read the unprotected item. That is plugin policy, not Keychain enforcement: malware that skips the prompt can still `SecItemCopyMatching`. Worth doing as UX; not a substitute for `kSecAttrAccessControl`.
 
 Encrypt / `--list` read attributes only and must not prompt.
 
@@ -203,7 +203,7 @@ macOS-only for Keychain operations (`//go:build darwin`); other OS: clear error 
 
 - Secret never written to the identity file and never printed by the plugin
 - Sync uses Apple’s iCloud Keychain E2E; items are not `ThisDeviceOnly`
-- `userPresence` is an item annotation + later `LAContext.evaluatePolicy`, not `kSecAttrAccessControl` (Apple rejects that on sync)
+- `userPresence` is an item annotation + `LAContext.EvaluatePolicy` on decrypt, not `kSecAttrAccessControl` (Apple rejects that on sync)
 
 **Non-goals (v1)**
 

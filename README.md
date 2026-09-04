@@ -17,7 +17,7 @@ ln -sf "$(pwd)/age-plugin-icloud.app/Contents/MacOS/age-plugin-icloud" /usr/loca
 
 ## Usage
 
-Generate (once, on any signed-in Mac). Default name is `default`. `--access-control=userPresence` is stored on the item (default); Touch ID is not required at generate, and is not a Keychain ACL (Apple rejects that on synced items). Decrypt will honor it later.
+Generate (once, on any signed-in Mac). Default name is `default`. `--access-control=userPresence` is stored on the item (default); generate does not prompt. Decrypt calls LocalAuthentication when the annotation is `userPresence`. That is not a Keychain ACL (Apple rejects that on synced items).
 
 ```bash
 age-plugin-icloud --generate > ~/.age/icloud.txt
@@ -44,7 +44,7 @@ age -e -i ~/.age/icloud.txt -o secret.age file
 age -e -j icloud -o secret.age file
 ```
 
-Decrypt on any Mac with that Apple ID (plugin + Keychain):
+Decrypt on any Mac with that Apple ID (plugin + Keychain; Touch ID or passcode if the identity was generated with `userPresence`):
 
 ```bash
 age -d -i ~/.age/icloud.txt secret.age
@@ -63,7 +63,7 @@ There is no `--export` / `--import`.
 
 ## iCloud Keychain
 
-Items sync via iCloud Keychain (`kSecAttrSynchronizable` + `AfterFirstUnlock`). Apple rejects `kSecAttrAccessControl` on those items (`errSecParam` `-50`). `--access-control` is therefore an annotation in `kSecAttrGeneric`, not a Keychain ACL: generate does not prompt, and decrypt will call LocalAuthentication itself when the annotation is `userPresence`. That is policy in this plugin, not Secure Enclave enforcement.
+Items sync via iCloud Keychain (`kSecAttrSynchronizable` + `AfterFirstUnlock`). Apple rejects `kSecAttrAccessControl` on those items (`errSecParam` `-50`). `--access-control` is therefore an annotation in `kSecAttrGeneric`, not a Keychain ACL: generate does not prompt, and decrypt calls `LAContext.EvaluatePolicy` when the annotation is `userPresence`. That is policy in this plugin, not Secure Enclave enforcement. SSH/headless decrypt needs `--access-control=none`.
 
 ## Signing
 

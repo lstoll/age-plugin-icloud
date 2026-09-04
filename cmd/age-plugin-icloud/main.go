@@ -16,7 +16,7 @@ func main() {
 	list := flag.Bool("list", false, "reprint identity files from Keychain attributes")
 	delete := flag.Bool("delete", false, "delete a named identity from iCloud Keychain")
 	name := flag.String("name", identity.DefaultName, "identity name")
-	accessControl := flag.String("access-control", string(identity.AccessControlUserPresence), "`userPresence` (Touch ID or passcode on decrypt) or `none`")
+	accessControl := flag.String("access-control", string(identity.AccessControl5m), "`none`, `everyTime` (Touch ID each decrypt), or `5m` (Touch ID, skip 5 minutes on this Mac)")
 
 	p, err := plugin.New(identity.PluginName)
 	if err != nil {
@@ -27,7 +27,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, `age-plugin-icloud stores age MLKEM768-X25519 keys in iCloud Keychain.
 
 Usage:
-  age-plugin-icloud --generate [--name NAME] [--access-control=userPresence|none]
+  age-plugin-icloud --generate [--name NAME] [--access-control=none|everyTime|5m]
   age-plugin-icloud --list [--name NAME]
   age-plugin-icloud --delete --name NAME
 

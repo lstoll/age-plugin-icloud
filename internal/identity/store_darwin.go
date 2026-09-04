@@ -3,8 +3,10 @@
 package identity
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -78,7 +80,7 @@ func Generate(name string, mode AccessControlMode) (string, error) {
 		return "", err
 	}
 	if mode == "" {
-		mode = AccessControlUserPresence
+		mode = AccessControl5m
 	}
 	group, err := accessGroup()
 	if err != nil {
@@ -130,14 +132,14 @@ func List() ([]Item, error) {
 	}
 	items := make([]Item, 0, len(passwords))
 	for _, p := range passwords {
-		rec, mode, err := parsePublicAttrs(p.GenericAttributes)
+		a, err := parsePublicAttrs(p.GenericAttributes)
 		if err != nil {
 			return nil, fmt.Errorf("identity %q: %w", p.Account, err)
 		}
 		items = append(items, Item{
 			Name:          p.Account,
-			Recipient:     rec,
-			AccessControl: mode,
+			Recipient:     a.Recipient,
+			AccessControl: a.mode(),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
@@ -211,14 +213,14 @@ func LoadRecipient(name string) (age.Recipient, error) {
 		}
 		return nil, wrapKeychain("load recipient "+name, err)
 	}
-	rec, _, err := parsePublicAttrs(attrs.GenericAttributes)
+	a, err := parsePublicAttrs(attrs.GenericAttributes)
 	if err != nil {
 		return nil, fmt.Errorf("identity %q: %w", name, err)
 	}
-	if rec == "" {
+	if a.Recipient == "" {
 		return nil, fmt.Errorf("identity %q has no stored recipient", name)
 	}
-	return age.ParseHybridRecipient(rec)
+	return age.ParseHybridRecipient(a.Recipient)
 }
 
 func loadSecretLocked(name string) (*age.HybridIdentity, error) {
@@ -233,13 +235,23 @@ func loadSecretLocked(name string) (*age.HybridIdentity, error) {
 	if err != nil {
 		return nil, wrapKeychain("load identity "+name, err)
 	}
-	_, mode, err := parsePublicAttrs(attrs.GenericAttributes)
+	a, err := parsePublicAttrs(attrs.GenericAttributes)
 	if err != nil {
 		return nil, fmt.Errorf("identity %q: %w", name, err)
 	}
-	if mode == AccessControlUserPresence {
-		if err := requireUserPresenceLocked(); err != nil {
-			return nil, err
+	mode := a.mode()
+	if mode.prompts() {
+		machine := machineID()
+		if !(mode == AccessControl5m && a.presenceFresh(machine, time.Now())) {
+			if err := requireUserPresenceLocked(presenceReason(name), mode == AccessControl5m); err != nil {
+				return nil, err
+			}
+			if mode == AccessControl5m {
+				a.stampPresence(machine, time.Now())
+				if raw, err := json.Marshal(a); err == nil {
+					_ = keychain.UpdateGenericPasswordAttributes(q, raw)
+				}
+			}
 		}
 	}
 	secret, err := keychain.GetGenericPassword(q)
@@ -254,7 +266,7 @@ func loadSecretLocked(name string) (*age.HybridIdentity, error) {
 	return id, nil
 }
 
-func requireUserPresenceLocked() error {
+func requireUserPresenceLocked(reason string, allowUnlockReuse bool) error {
 	if presenceOK {
 		return nil
 	}
@@ -263,14 +275,31 @@ func requireUserPresenceLocked() error {
 		if err != nil {
 			return fmt.Errorf("LAContext: %w", err)
 		}
-		if err := ctx.SetMaximumTouchIDReuseDuration(); err != nil {
-			return err
+		if allowUnlockReuse {
+			if err := ctx.SetMaximumTouchIDReuseDuration(); err != nil {
+				return err
+			}
 		}
 		auth = ctx
 	}
-	if err := auth.EvaluatePolicy(keychain.AuthPolicyDeviceOwnerAuthentication, "decrypt with age-plugin-icloud"); err != nil {
+	if err := auth.EvaluatePolicy(keychain.AuthPolicyDeviceOwnerAuthentication, reason); err != nil {
 		return wrapKeychain("authenticate", err)
 	}
 	presenceOK = true
 	return nil
+}
+
+func presenceReason(name string) string {
+	if name == "" {
+		return "Decrypt using an iCloud Keychain identity"
+	}
+	return fmt.Sprintf("Decrypt using the “%s” identity", name)
+}
+
+func machineID() string {
+	id, err := keychain.PlatformUUID()
+	if err != nil || id == "" {
+		id, _ = os.Hostname()
+	}
+	return id
 }

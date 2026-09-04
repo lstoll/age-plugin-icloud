@@ -51,8 +51,8 @@ func TestEncodeIdentity(t *testing.T) {
 
 func TestIdentityFile(t *testing.T) {
 	created := time.Date(2026, 9, 4, 12, 37, 0, 0, time.FixedZone("CEST", 2*3600))
-	got := IdentityFile("default", "age1pq1example", created, AccessControlUserPresence)
-	wantPrefix := "# created: 2026-09-04T12:37:00+02:00\n# recipient: age1pq1example\n# access-control: userPresence\nAGE-PLUGIN-ICLOUD-"
+	got := IdentityFile("default", "age1pq1example", created, AccessControl5m)
+	wantPrefix := "# created: 2026-09-04T12:37:00+02:00\n# name: default\n# recipient: age1pq1example\n# access-control: 5m\nAGE-PLUGIN-ICLOUD-"
 	if !strings.HasPrefix(got, wantPrefix) {
 		t.Fatalf("got:\n%s", got)
 	}
@@ -64,19 +64,31 @@ func TestIdentityFile(t *testing.T) {
 	if strings.Contains(reprint, "created:") {
 		t.Fatal("reprint must not invent a created timestamp")
 	}
-	if !strings.HasPrefix(reprint, "# recipient: age1pq1example\n# access-control: none\nAGE-PLUGIN-ICLOUD-") {
+	if !strings.HasPrefix(reprint, "# name: default\n# recipient: age1pq1example\n# access-control: none\nAGE-PLUGIN-ICLOUD-") {
 		t.Fatalf("reprint:\n%s", reprint)
 	}
 }
 
 func TestParseAccessControl(t *testing.T) {
-	m, err := ParseAccessControl("userPresence")
-	if err != nil || m != AccessControlUserPresence {
+	m, err := ParseAccessControl("5m")
+	if err != nil || m != AccessControl5m {
 		t.Fatalf("got %q %v", m, err)
 	}
 	m, err = ParseAccessControl("")
-	if err != nil || m != AccessControlUserPresence {
+	if err != nil || m != AccessControl5m {
 		t.Fatalf("empty: got %q %v", m, err)
+	}
+	m, err = ParseAccessControl("userPresence")
+	if err != nil || m != AccessControl5m {
+		t.Fatalf("userPresence alias: got %q %v", m, err)
+	}
+	m, err = ParseAccessControl("everyTime")
+	if err != nil || m != AccessControlEveryTime {
+		t.Fatalf("got %q %v", m, err)
+	}
+	m, err = ParseAccessControl("always")
+	if err != nil || m != AccessControlEveryTime {
+		t.Fatalf("always: got %q %v", m, err)
 	}
 	m, err = ParseAccessControl("none")
 	if err != nil || m != AccessControlNone {
@@ -88,32 +100,52 @@ func TestParseAccessControl(t *testing.T) {
 }
 
 func TestPublicAttrs(t *testing.T) {
-	raw, err := encodePublicAttrs("age1pq1example", AccessControlUserPresence)
+	raw, err := encodePublicAttrs("age1pq1example", AccessControl5m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec, mode, err := parsePublicAttrs(raw)
+	a, err := parsePublicAttrs(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec != "age1pq1example" || mode != AccessControlUserPresence {
-		t.Fatalf("got rec=%q mode=%q", rec, mode)
+	if a.Recipient != "age1pq1example" || a.mode() != AccessControl5m {
+		t.Fatalf("got rec=%q mode=%q", a.Recipient, a.mode())
 	}
 
-	rec, mode, err = parsePublicAttrs([]byte("age1pq1legacy"))
+	a, err = parsePublicAttrs([]byte("age1pq1legacy"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec != "age1pq1legacy" || mode != AccessControlNone {
-		t.Fatalf("legacy: rec=%q mode=%q", rec, mode)
+	if a.Recipient != "age1pq1legacy" || a.mode() != AccessControlNone {
+		t.Fatalf("legacy: rec=%q mode=%q", a.Recipient, a.mode())
 	}
 
-	rec, mode, err = parsePublicAttrs([]byte(`{"recipient":"age1pq1x"}`))
+	a, err = parsePublicAttrs([]byte(`{"recipient":"age1pq1x"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec != "age1pq1x" || mode != AccessControlNone {
-		t.Fatalf("no annotation: rec=%q mode=%q", rec, mode)
+	if a.Recipient != "age1pq1x" || a.mode() != AccessControlNone {
+		t.Fatalf("no annotation: rec=%q mode=%q", a.Recipient, a.mode())
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	a, err = parsePublicAttrs([]byte(`{"recipient":"age1pq1x","accessControl":"5m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.stampPresence("uuid", now)
+	if !a.presenceFresh("uuid", now.Add(time.Minute)) {
+		t.Fatal("expected fresh within 5m")
+	}
+	if a.presenceFresh("uuid", now.Add(6*time.Minute)) {
+		t.Fatal("expected stale after 5m")
+	}
+	if a.presenceFresh("other", now) {
+		t.Fatal("other machine")
+	}
+	a.AccessControl = string(AccessControlEveryTime)
+	if a.presenceFresh("uuid", now) {
+		t.Fatal("everyTime must not use the cache")
 	}
 }
 

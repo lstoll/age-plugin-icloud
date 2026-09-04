@@ -54,8 +54,8 @@ Default identity (`age -d -j icloud` / `age -e -j icloud`) is an empty plugin id
 **Generate (once, any Mac signed into the Apple ID):**
 
 ```bash
-age-plugin-icloud --generate              # name=default, annotate userPresence
-age-plugin-icloud --generate --name work
+age-plugin-icloud --generate              # name=default, annotate 5m
+age-plugin-icloud --generate --name work --access-control=everyTime
 age-plugin-icloud --generate --access-control=none
 ```
 
@@ -74,7 +74,7 @@ age -e -i icloud-identity.txt -o secret.age file
 age -e -j icloud -o secret.age file
 ```
 
-**Decrypt on any Mac with that Apple ID** (plugin + Keychain; `EvaluatePolicy` if annotated `userPresence`):
+**Decrypt on any Mac with that Apple ID** (plugin + Keychain; `EvaluatePolicy` if annotated `5m` or `everyTime`):
 
 ```bash
 age -d -i icloud-identity.txt secret.age
@@ -101,7 +101,7 @@ Use a **generic password** in the **data-protection keychain**, iCloud-synced. C
 | Account | key name (`default`, `work`, …) |
 | Label | `age-plugin-icloud (name)` |
 | Value | UTF-8 `AGE-SECRET-KEY-PQ-1...` (age’s own encoding; `ParseHybridIdentity` on read) |
-| Generic | JSON `{"recipient":"age1pq1...","accessControl":"userPresence"|"none"}` so `--list` / encrypt-as-recipient never read the secret. `accessControl` is an annotation for a later app-level prompt, not `kSecAttrAccessControl`. |
+| Generic | JSON `{"recipient":"age1pq1...","accessControl":"none"|"everyTime"|"5m"}` so `--list` / encrypt-as-recipient never read the secret. `accessControl` is an annotation for an app-level prompt, not `kSecAttrAccessControl`. `presenceAt` is last prompt time per hardware UUID for the `5m` policy. |
 | Synchronizable | true |
 | Accessible | `kSecAttrAccessibleAfterFirstUnlock` |
 | AccessControl | **not set.** `SecItemAdd` of `kSecAttrSynchronizable` + `kSecAttrAccessControl` returns `errSecParam` (`-50`) (tried `WhenUnlocked` and `AfterFirstUnlock`). |
@@ -113,11 +113,11 @@ Queries **must** set `Synchronizable=true` or they will not see iCloud items. Do
 
 Spike: **Keychain cannot attach `userPresence` to a synchronizable item** (`errSecParam`). Do not use `ThisDeviceOnly` to get a real ACL; that cannot sync.
 
-Instead, store `--access-control` in `kSecAttrGeneric` at generate (no prompt). On decrypt, if the annotation is `userPresence`, call `LAContext.EvaluatePolicy` (`LAPolicyDeviceOwnerAuthentication`) once per process, then read the unprotected item. That is plugin policy, not Keychain enforcement: malware that skips the prompt can still `SecItemCopyMatching`. Worth doing as UX; not a substitute for `kSecAttrAccessControl`.
+Instead, store `--access-control` in `kSecAttrGeneric` at generate (no prompt): `none`, `everyTime`, or `5m`. On decrypt, `everyTime` always calls `LAContext.EvaluatePolicy`; `5m` skips for five minutes on this Mac after a successful prompt (`presenceAt[hardwareUUID]=unix time`). `userPresence` in existing items is treated as `5m`. That is plugin policy, not Keychain enforcement.
 
 Encrypt / `--list` read attributes only and must not prompt.
 
-Decrypt over SSH with `userPresence` will need a GUI (or use `--access-control=none`).
+Decrypt over SSH with `everyTime`/`5m` will need a GUI (or use `--access-control=none`).
 
 ## Code signing — yes, required
 
@@ -203,7 +203,7 @@ macOS-only for Keychain operations (`//go:build darwin`); other OS: clear error 
 
 - Secret never written to the identity file and never printed by the plugin
 - Sync uses Apple’s iCloud Keychain E2E; items are not `ThisDeviceOnly`
-- `userPresence` is an item annotation + `LAContext.EvaluatePolicy` on decrypt, not `kSecAttrAccessControl` (Apple rejects that on sync)
+- `5m` / `everyTime` are item annotations + `LAContext.EvaluatePolicy` on decrypt, not `kSecAttrAccessControl` (Apple rejects that on sync)
 
 **Non-goals (v1)**
 
@@ -222,4 +222,4 @@ macOS-only for Keychain operations (`//go:build darwin`); other OS: clear error 
 3. Plugin keygen/list/delete against Keychain
 4. `HandleIdentity` / `HandleIdentityAsRecipient` wired to age hybrid types; cache secret per process
 5. Signing/entitlements so DP-keychain and iCloud access group are stable
-6. README: flows, iCloud + signing, vs `age-plugin-se`
+6. README (end-user) + DISTRIBUTION.md (local/dev, Developer ID, CI)

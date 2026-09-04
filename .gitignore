@@ -1,0 +1,8 @@
+/age-plugin-icloud
+/age-plugin-icloud.app
+.env
+/build
+/dist
+xcuserdata
+
+

@@ -12,8 +12,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: lstoll/keychain
+          path: keychain
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Use checked-out keychain
+        run: go mod edit -replace=lds.li/keychain=./keychain
       - name: Test
         run: go test ./...

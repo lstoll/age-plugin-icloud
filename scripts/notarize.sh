@@ -25,7 +25,7 @@ elif [ -n "${APPLE_API_KEY_P8:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "$
 	keyfile="${APPLE_API_KEY_FILE:-}"
 	if [ -z "$keyfile" ]; then
 		keyfile="$(mktemp)"
-		printf '%s' "$APPLE_API_KEY_P8" > "$keyfile"
+		printf '%s\n' "$APPLE_API_KEY_P8" > "$keyfile"
 		trap 'rm -f "$keyfile"' EXIT
 	fi
 	xcrun notarytool submit "$ZIP" \

@@ -1,4 +1,8 @@
-# Signed, notarized macOS .app on version tags (v1.2.3).
+# Signed, notarized macOS .app.
+# Snapshots (prereleases) on default-branch pushes; full releases on v* tags.
+#
+# One-time Apple: Developer ID Application cert + Developer ID profile for
+# App ID li.lds.age-plugin-icloud, plus an App Store Connect API key.
 # Secrets: APPLE_P12_BASE64, APPLE_P12_PASSWORD, APPLE_PROFILE_BASE64,
 # APPLE_CODESIGN_IDENTITY, APPLE_TEAM_ID,
 # APPLE_API_KEY_ID, APPLE_API_ISSUER, APPLE_API_KEY_P8
@@ -7,6 +11,9 @@ name: release
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+      - master
     tags:
       - "v*"
 
@@ -20,9 +27,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: lstoll/keychain
+          path: keychain
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Use checked-out keychain
+        run: go mod edit -replace=lds.li/keychain=./keychain
+      - id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            v="${GITHUB_REF_NAME#v}"
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            v="$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}"
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+            echo "tag=snapshot-$v" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Import signing material
         env:
           APPLE_P12_BASE64: ${{ secrets.APPLE_P12_BASE64 }}
@@ -33,7 +59,7 @@ jobs:
         env:
           CI: true
           RELEASE: "1"
-          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
           CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: ./scripts/sign.sh
@@ -46,13 +72,17 @@ jobs:
       - name: Zip
         run: |
           mkdir -p dist
-          ditto -c -k --keepParent age-plugin-icloud.app "dist/age-plugin-icloud-${{ github.ref_type == 'tag' && github.ref_name || github.sha }}-darwin.zip"
+          ditto -c -k --keepParent age-plugin-icloud.app \
+            "dist/age-plugin-icloud-${{ steps.version.outputs.version }}-darwin.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: age-plugin-icloud-macos
           path: dist/*.zip
       - uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.prerelease == 'true' && format('snapshot {0}', steps.version.outputs.version) || steps.version.outputs.tag }}
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.version.outputs.prerelease != 'true' }}
           files: dist/age-plugin-icloud-*.zip
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.version.outputs.prerelease != 'true' }}

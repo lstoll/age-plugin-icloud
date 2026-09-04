@@ -6,22 +6,23 @@ Losing every Mac signed into that Apple ID loses the key. Encrypt important file
 
 ## Install
 
-macOS only. The plugin is packaged as a dummy `.app` so it can embed a provisioning profile (required for the data-protection keychain). `age` must find `age-plugin-icloud` on `PATH` as a **symlink into that bundle**, not a copied Mach-O.
+macOS only. The plugin is a dummy `.app` (needed so the data-protection keychain will accept it). `age` must find `age-plugin-icloud` on `PATH` as a **symlink into that bundle**, not a copied Mach-O.
+
+Download the zip from [Releases](https://github.com/lstoll/age-plugin-icloud/releases) (`v*` for a named release, or a snapshot prerelease). Unzip somewhere stable, then:
 
 ```bash
-./scripts/sign.sh
-ln -sf "$(pwd)/age-plugin-icloud.app/Contents/MacOS/age-plugin-icloud" /usr/local/bin/age-plugin-icloud
+ln -sf /path/to/age-plugin-icloud.app/Contents/MacOS/age-plugin-icloud /usr/local/bin/age-plugin-icloud
 ```
 
-`scripts/sign.sh` runs `go build`, wraps the binary, finds a Mac development profile on this machine, and `codesign`s. Use the same Apple team on every Mac that should decrypt. CI (`go test`) does not sign.
+Copying the inner binary out of the `.app` will not work. Building and signing is in [DISTRIBUTION.md](DISTRIBUTION.md).
 
 ## Usage
 
-Generate (once, on any signed-in Mac). Default name is `default`. `--access-control=userPresence` is stored on the item (default); generate does not prompt. Decrypt calls LocalAuthentication when the annotation is `userPresence`. That is not a Keychain ACL (Apple rejects that on synced items).
+Generate (once, on any signed-in Mac). Default name is `default`. `--access-control` is stored on the item (default `5m`); generate does not prompt.
 
 ```bash
 age-plugin-icloud --generate > ~/.age/icloud.txt
-age-plugin-icloud --generate --name work > ~/.age/icloud-work.txt
+age-plugin-icloud --generate --name work --access-control=everyTime
 age-plugin-icloud --generate --name ssh --access-control=none
 ```
 
@@ -44,7 +45,7 @@ age -e -i ~/.age/icloud.txt -o secret.age file
 age -e -j icloud -o secret.age file
 ```
 
-Decrypt on any Mac with that Apple ID (plugin + Keychain; Touch ID or passcode if the identity was generated with `userPresence`):
+Decrypt on any Mac with that Apple ID (plugin + Keychain). `5m` (default) and `everyTime` prompt for Touch ID or passcode; `none` does not:
 
 ```bash
 age -d -i ~/.age/icloud.txt secret.age
@@ -63,21 +64,13 @@ There is no `--export` / `--import`.
 
 ## iCloud Keychain
 
-Items sync via iCloud Keychain (`kSecAttrSynchronizable` + `AfterFirstUnlock`). Apple rejects `kSecAttrAccessControl` on those items (`errSecParam` `-50`). `--access-control` is therefore an annotation in `kSecAttrGeneric`, not a Keychain ACL: generate does not prompt, and decrypt calls `LAContext.EvaluatePolicy` when the annotation is `userPresence`. That is policy in this plugin, not Secure Enclave enforcement. SSH/headless decrypt needs `--access-control=none`.
+Items sync via iCloud Keychain. `--access-control` is a plugin prompt, not an Apple Keychain ACL (Apple will not attach those to synced items):
 
-## Signing
+- `none` — no prompt
+- `everyTime` — Touch ID or passcode on every decrypt
+- `5m` (default) — prompt, then skip for five minutes on this Mac. Other Macs still prompt.
 
-Data-protection keychain (the “iCloud” list in Keychain Access) requires **`com.apple.application-identifier`** and **`keychain-access-groups`** (the App ID, not a sharing group) authorized by an embedded provisioning profile. There is no Xcode project; `scripts/sign.sh` builds a dummy `age-plugin-icloud.app`.
-
-The profile is created once (not every build):
-
-- [developer.apple.com profiles](https://developer.apple.com/account/resources/profiles/list) — Mac App Development, App ID `li.lds.age-plugin-icloud`, this Mac
-- or `fastlane sigh --development --platform macos --app_identifier li.lds.age-plugin-icloud`
-- or one Xcode automatic-signing build of any macOS app with that bundle ID
-
-Then `sign.sh` picks it up from `~/Library/Developer/Xcode/UserData/Provisioning Profiles/` (or `PROVISIONING_PROFILE=`). Override identity with `CODESIGN_IDENTITY`.
-
-A later distribution build is `RELEASE=1` plus an explicit identity, team, and Developer ID profile (no home-dir search when `CI=true`), then `scripts/notarize.sh`. That path is what `.github/workflows/release.yml` will use; it is not required for local use. Ad-hoc `codesign -s -` has no Team ID and will not sync. Copying the inner Mach-O out of the `.app` drops the profile and macOS kills the process at launch.
+Generate does not prompt. SSH/headless decrypt needs `--access-control=none`. Older items stored as `userPresence` are treated as `5m`.
 
 ## vs age-plugin-se
 

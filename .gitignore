@@ -5,7 +5,4 @@
 /dist
 /keychain
 xcuserdata
-
-
-*.provisionprofile
 .DS_Store

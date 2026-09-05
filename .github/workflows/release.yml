@@ -1,8 +1,8 @@
 # Signed, notarized macOS .app.
 # Snapshots (prereleases) on default-branch pushes; full releases on v* tags.
 #
-# Environment `release` holds DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_P12_PASSWORD,
-# and ASC_API_KEY_P8. Same-repo PRs from the owner can sign (artifact only).
+# Repo Actions secrets: DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_P12_PASSWORD,
+# ASC_API_KEY_P8. Same-repo PRs from the owner can sign (artifact only).
 # Forks never get the secrets. Never pull_request_target.
 name: release
 
@@ -25,20 +25,9 @@ concurrency:
 jobs:
   macos:
     name: Sign and notarize
-    if: >
-      github.repository == 'lstoll/age-plugin-icloud' &&
-      !github.event.repository.fork &&
-      (
-        (github.event_name == 'pull_request' &&
-         github.event.pull_request.head.repo.full_name == github.repository &&
-         github.actor == github.repository_owner) ||
-        (github.event_name != 'pull_request' &&
-         (github.ref == 'refs/heads/main' ||
-          github.ref == 'refs/heads/master' ||
-          startsWith(github.ref, 'refs/tags/v')))
-      )
+    # Non-PR first so push/dispatch never evaluates pull_request.*.
+    if: ${{ github.repository == 'lstoll/age-plugin-icloud' && !github.event.repository.fork && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner)) }}
     runs-on: macos-latest
-    environment: release
     permissions:
       contents: write # gh release create + upload zip
     steps:
@@ -46,17 +35,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: lstoll/keychain
-          path: keychain
-          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: false
-      - name: Use checked-out keychain
-        run: go mod edit -replace=lds.li/keychain=./keychain
       - id: version
         run: |
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
@@ -100,3 +82,43 @@ jobs:
               --generate-notes \
               --latest
           fi
+      # GITHUB_TOKEN cannot trigger on: release workflows, so bump here.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: github.event_name != 'pull_request' && steps.version.outputs.prerelease != 'true'
+        with:
+          repository: lstoll/homebrew-tap
+          path: homebrew-tap
+          persist-credentials: false
+      - name: Bump tap
+        if: github.event_name != 'pull_request' && steps.version.outputs.prerelease != 'true'
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_GITHUB_TOKEN:-}" ]; then
+            echo "TAP_GITHUB_TOKEN is required to push lstoll/homebrew-tap" >&2
+            exit 1
+          fi
+          zip="dist/age-plugin-icloud-${VERSION}-darwin.zip"
+          sha="$(shasum -a 256 "$zip" | awk '{print $1}')"
+          python3 - "$VERSION" "$sha" <<'PY'
+          import pathlib, re, sys
+          version, sha = sys.argv[1], sys.argv[2]
+          path = pathlib.Path("homebrew-tap/Casks/age-plugin-icloud.rb")
+          text = path.read_text()
+          text, n1 = re.subn(r'version "[^"]+"', f'version "{version}"', text, count=1)
+          text, n2 = re.subn(r'sha256 "[^"]+"', f'sha256 "{sha}"', text, count=1)
+          if n1 != 1 or n2 != 1:
+              raise SystemExit(f"cask replace failed: version={n1} sha256={n2}")
+          path.write_text(text)
+          PY
+          git -C homebrew-tap config user.name "github-actions[bot]"
+          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C homebrew-tap add Casks/age-plugin-icloud.rb
+          if git -C homebrew-tap diff --cached --quiet; then
+            echo "cask already at ${VERSION}"
+            exit 0
+          fi
+          git -C homebrew-tap commit -m "age-plugin-icloud ${VERSION}"
+          git -C homebrew-tap push "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/lstoll/homebrew-tap.git" HEAD:main

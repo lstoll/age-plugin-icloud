@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	filippo.io/age v1.3.2
-	lds.li/keychain v0.1.0
+	lds.li/keychain v0.1.1-0.20260905121538-a99d3406bc97
 )
 
 require (
@@ -14,5 +14,3 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 )
-
-replace lds.li/keychain => ../keychain

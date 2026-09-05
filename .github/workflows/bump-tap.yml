@@ -1,0 +1,54 @@
+# Bump lstoll/homebrew-tap after a non-prerelease GitHub Release.
+# Needs repo secret TAP_GITHUB_TOKEN (fine-grained PAT: Contents write on lstoll/homebrew-tap).
+name: bump-tap
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  bump:
+    name: Bump cask
+    if: ${{ github.repository == 'lstoll/age-plugin-icloud' && !github.event.repository.fork && !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: lstoll/homebrew-tap
+          persist-credentials: false
+      - name: Update cask version and sha256
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_GITHUB_TOKEN:-}" ]; then
+            echo "TAP_GITHUB_TOKEN is required to push lstoll/homebrew-tap" >&2
+            exit 1
+          fi
+          version="${TAG#v}"
+          asset="age-plugin-icloud-${version}-darwin.zip"
+          url="https://github.com/lstoll/age-plugin-icloud/releases/download/${TAG}/${asset}"
+          sha="$(curl -fsSL "$url" | sha256sum | awk '{print $1}')"
+          python3 - "$version" "$sha" <<'PY'
+          import pathlib, re, sys
+          version, sha = sys.argv[1], sys.argv[2]
+          path = pathlib.Path("Casks/age-plugin-icloud.rb")
+          text = path.read_text()
+          text, n1 = re.subn(r'version "[^"]+"', f'version "{version}"', text, count=1)
+          text, n2 = re.subn(r'sha256 "[^"]+"', f'sha256 "{sha}"', text, count=1)
+          if n1 != 1 or n2 != 1:
+              raise SystemExit(f"cask replace failed: version={n1} sha256={n2}")
+          path.write_text(text)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/age-plugin-icloud.rb
+          if git diff --cached --quiet; then
+            echo "cask already at ${version}"
+            exit 0
+          fi
+          git commit -m "age-plugin-icloud ${version}"
+          git push "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/lstoll/homebrew-tap.git" HEAD:main

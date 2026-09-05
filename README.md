@@ -1,32 +1,34 @@
 # age-plugin-icloud
 
-An [age](https://age-encryption.org) plugin that keeps an MLKEM768-X25519 secret in **iCloud Keychain**. Recipients are ordinary `age1pq1...` public keys, so encryption does not need this plugin. Decryption does: the on-disk identity is a pointer, not the key.
+:warning: *This is mostly vibe coded, and homelab quality code. It has not been deeply security reviewed, and the design does have limitations*
 
-Losing every Mac signed into that Apple ID loses the key. Encrypt important files to a second recipient if you want a backup you can export.
+An [age](https://age-encryption.org) plugin that keeps an MLKEM768-X25519 secret in iCloud Keychain. Recipients are ordinary `age1pq1...` public keys, so encryption does not need this plugin.
+
+Limitations:
+* Secret is stored in the iCloud keychain, and synced. It is protected to the normal Keychain + Sync levels, the secret is extractable.
+* The biometric unlock is enforced by the plugin, not they keychain. The unlock time is stored as an attribute on the secret. The command will not allow changing the access level, but anything granted permission to the keychain item can.
 
 ## Install
 
-macOS only. The plugin is a dummy `.app` (needed so the data-protection keychain will accept it). `age` must find `age-plugin-icloud` on `PATH` as a **symlink into that bundle**, not a copied Mach-O.
+macOS only. The plugin is a dummy `.app`, symlink the command in to the .app (required for the needed signing)
 
-Download the zip from [Releases](https://github.com/lstoll/age-plugin-icloud/releases) (`v*` for a named release, or a snapshot prerelease). Unzip somewhere stable, then:
+Download the zip from [Releases](https://github.com/lstoll/age-plugin-icloud/releases).
 
 ```bash
-ln -sf /path/to/age-plugin-icloud.app/Contents/MacOS/age-plugin-icloud /usr/local/bin/age-plugin-icloud
+ln -sf /path/to/age-plugin-icloud.app/Contents/MacOS/age-plugin-icloud <somewhere on $PATH>/age-plugin-icloud
 ```
-
-Copying the inner binary out of the `.app` will not work. Building and signing is in [DISTRIBUTION.md](DISTRIBUTION.md).
 
 ## Usage
 
-Generate (once, on any signed-in Mac). Default name is `default`. `--access-control` is stored on the item (default `5m`); generate does not prompt.
+Generate (once, on any signed-in Mac). Default name is `default`. `--access-control` is stored on the item (default `5m`).
 
 ```bash
 age-plugin-icloud --generate > ~/.age/icloud.txt
-age-plugin-icloud --generate --name work --access-control=everyTime
+age-plugin-icloud --generate --name sops-secret --access-control=everyTime
 age-plugin-icloud --generate --name ssh --access-control=none
 ```
 
-Stdout is the identity **pointer** plus a commented `age1pq` recipient. The secret is only in Keychain. Reprint later with `--list` (optionally `--name`); that omits `# created` because it is not stored.
+Stdout is the identity pointer plus a commented `age1pq` recipient. The secret is only in Keychain. Reprint later with `--list` (optionally `--name`).
 
 ```bash
 age-plugin-icloud --list --name work > ~/.age/icloud-work.txt
@@ -45,7 +47,7 @@ age -e -i ~/.age/icloud.txt -o secret.age file
 age -e -j icloud -o secret.age file
 ```
 
-Decrypt on any Mac with that Apple ID (plugin + Keychain). `5m` (default) and `everyTime` prompt for Touch ID or passcode; `none` does not:
+Decrypt on any Mac with that Apple ID (plugin + Keychain).
 
 ```bash
 age -d -i ~/.age/icloud.txt secret.age
@@ -61,17 +63,3 @@ age-plugin-icloud --delete --name work
 ```
 
 There is no `--export` / `--import`.
-
-## iCloud Keychain
-
-Items sync via iCloud Keychain. `--access-control` is a plugin prompt, not an Apple Keychain ACL (Apple will not attach those to synced items):
-
-- `none` — no prompt
-- `everyTime` — Touch ID or passcode on every decrypt
-- `5m` (default) — prompt, then skip for five minutes on this Mac. Other Macs still prompt.
-
-Generate does not prompt. SSH/headless decrypt needs `--access-control=none`. Older items stored as `userPresence` are treated as `5m`.
-
-## vs age-plugin-se
-
-[age-plugin-se](https://github.com/remko/age-plugin-se) holds keys in the Secure Enclave. Those keys cannot leave the device, so they cannot sync. This plugin stores a software seed that iCloud Keychain can sync, and uses native X-Wing (`age1pq` / `mlkem768x25519`) rather than tagged hardware recipients.
